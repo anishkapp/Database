@@ -1,0 +1,209 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "sqlAdministratorLogin": {
+            "type": "String",
+            "metadata": {
+                "description": "The administrator username of the SQL Server."
+            }
+        },
+        "companyName": {
+            "maxLength": 128,
+            "type": "String"
+        },
+        "location": {
+            "defaultValue": "australiacentral",
+            "allowedValues": [
+                "australiaeast",
+                "australiacentral",
+                "australiasoutheast"
+            ],
+            "type": "String"
+        },
+        "sqlAdministratorLoginPassword": {
+            "type": "SecureString",
+            "metadata": {
+                "description": "The administrator password of the SQL Server."
+            }
+        },
+        "transparentDataEncryption": {
+            "defaultValue": "Enabled",
+            "allowedValues": [
+                "Enabled",
+                "Disabled"
+            ],
+            "type": "String",
+            "metadata": {
+                "description": "Enable or disable Transparent Data Encryption (TDE) for the database."
+            }
+        },
+        "resourceIDSubnet": {
+            "type": "String"
+        },
+        "sqlstorageType": {
+            "defaultValue": "Standard_LRS",
+            "allowedValues": [
+                "Standard_LRS",
+                "Standard_ZRS",
+                "Standard_GRS",
+                "Standard_RAGRS",
+                "Premium_LRS"
+            ],
+            "type": "String"
+        }
+    },
+    "variables": {
+        "sqlServerName": "[concat('sqlserver', uniqueString(subscription().id, resourceGroup().id))]",
+        "databaseName": "sql-db-with-tde",
+        "databaseEdition": "Basic",
+        "databaseCollation": "SQL_Latin1_General_CP1_CI_AS",
+        "databaseServiceObjectiveName": "Basic",
+        "sqlstorageName": "devsqlstorage01",
+        "vNetServiceEndPoint": "[parameters('resourceIDSubnet')]"
+    },
+    "resources": [
+        {
+            "type": "Microsoft.Sql/servers",
+            "apiVersion": "2020-02-02-preview",
+            "name": "[variables('sqlServerName')]",
+            "location": "[parameters('location')]",
+            "tags": {
+                "displayName": "SqlServer"
+            },
+            "properties": {
+                "administratorLogin": "[parameters('sqlAdministratorLogin')]",
+                "administratorLoginPassword": "[parameters('sqlAdministratorLoginPassword')]",
+                "version": "12.0"
+            },
+            "resources": [
+                {
+                    "type": "databases",
+                    "apiVersion": "2020-02-02-preview",
+                    "name": "[variables('databaseName')]",
+                    "location": "[parameters('location')]",
+                    "dependsOn": [
+                        "[variables('sqlServerName')]"
+                    ],
+                    "tags": {
+                        "displayName": "Database"
+                    },
+                    "properties": {
+                        "edition": "[variables('databaseEdition')]",
+                        "collation": "[variables('databaseCollation')]",
+                        "requestedServiceObjectiveName": "[variables('databaseServiceObjectiveName')]"
+                    },
+                    "resources": [
+                        {
+                            "type": "transparentDataEncryption",
+                            "apiVersion": "2017-03-01-preview",
+                            "name": "current",
+                            "dependsOn": [
+                                "[variables('databaseName')]"
+                            ],
+                            "properties": {
+                                "status": "[parameters('transparentDataEncryption')]"
+                            }
+                        }
+                    ]
+                },
+                {
+                    "type": "firewallrules",
+                    "apiVersion": "2020-02-02-preview",
+                    "name": "Azure",
+                    "location": "[parameters('location')]",
+                    "dependsOn": [
+                        "[variables('sqlServerName')]"
+                    ],
+                    "properties": {
+                        "endIpAddress": "0.0.0.0",
+                        "startIpAddress": "0.0.0.0"
+                    }
+                },
+                {
+                    "type": "auditingSettings",
+                    "apiVersion": "2015-05-01-preview",
+                    "name": "Default",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Sql/servers', variables('sqlserverName'))]"
+                    ],
+                    "properties": {
+                        "state": "Enabled",
+                        "storageEndpoint": "[concat('https://', variables('sqlstorageName'), '.blob.core.windows.net/')]",
+                        "storageAccountAccessKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts',variables('sqlstorageName')), '2018-02-01').keys[0].value]",
+                        "retentionDays": "30",
+                        "auditActionsAndGroups": null,
+                        "auditLogsTableName": "[variables('sqlserverName')]"
+                    }
+                },
+                {
+                    "type": "securityAlertPolicies",
+                    "apiVersion": "2015-05-01-preview",
+                    "name": "DefaultSecurityAlert",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Sql/servers', variables('sqlserverName'))]"
+                    ],
+                    "properties": {
+                        "state": "Enabled",
+                        "disabledAlerts": "",
+                        "emailAddresses": "admin@mycompany.com",
+                        "emailAccountAdmins": "Disabled",
+                        "storageEndpoint": "[concat('https://', variables('sqlstorageName'), '.blob.core.windows.net/')]",
+                        "storageAccountAccessKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts',variables('sqlstorageName')), '2018-02-01').keys[0].value]"
+                    }
+                },
+                {
+                    "type": "vulnerabilityAssessments",
+                    "apiVersion": "2018-06-01-preview",
+                    "name": "DefaultAtpTemplate",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Sql/servers', variables('sqlserverName'))]",
+                        "[concat('Microsoft.Storage/storageAccounts/', variables('sqlstorageName'))]",
+                        "DefaultSecurityAlert"
+                    ],
+                    "properties": {
+                        "storageContainerPath": "[concat(reference(resourceId('Microsoft.Storage/storageAccounts', variables('sqlstorageName'))), 'vulnerability-assessment')]",
+                        "storageAccountAccessKey": "[listKeys(resourceId('Microsoft.Storage/storageAccounts',variables('sqlstorageName')), '2018-02-01').keys[0].value]",
+                        "recurringScans": {
+                            "isEnabled": true,
+                            "emailSubscriptionAdmins": true,
+                            "emails": [
+                                "admin@mycompany.com"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "type": "Microsoft.Sql/servers/virtualNetworkRules",
+                    "apiVersion": "2015-05-01-preview",
+                    "name": "[concat(variables('sqlserverName'), '/', 'vNetServiceEndPoint')]",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Sql/servers', variables('sqlserverName'))]"
+                    ],
+                    "properties": {
+                        "virtualNetworkSubnetId": "[variables('vNetServiceEndPoint')]"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "Microsoft.Storage/storageAccounts",
+            "apiVersion": "2015-06-15",
+            "name": "[variables('sqlstorageName')]",
+            "location": "[resourceGroup().location]",
+            "dependsOn": [],
+            "tags": {
+                "displayName": "sqlstorage"
+            },
+            "properties": {
+                "accountType": "[parameters('sqlstorageType')]"
+            }
+        }
+    ],
+    "outputs": {
+        "SqlServerName": {
+            "type": "String",
+            "value": "[variables('sqlserverName')]"
+        }
+    }
+}
